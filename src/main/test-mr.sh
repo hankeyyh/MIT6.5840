@@ -5,7 +5,7 @@
 #
 
 # un-comment this to run the tests with the Go race detector.
-# RACE=-race
+RACE=-race
 
 if [[ "$OSTYPE" = "darwin"* ]]
 then
@@ -83,6 +83,7 @@ sort mr-out-0 > mr-correct-wc.txt
 rm -f mr-out*
 
 echo '***' Starting wc test.
+(cd ../../log-storage && rm -f mr.log)
 
 maybe_quiet $TIMEOUT ../mrcoordinator ../pg*txt &
 pid=$!
@@ -115,6 +116,7 @@ wait
 
 #########################################################
 # now indexer
+(cd ../../log-storage && rm -f mr.log)
 rm -f mr-*
 
 # generate the correct output
@@ -145,6 +147,7 @@ wait
 
 #########################################################
 echo '***' Starting map parallelism test.
+(cd ../../log-storage && rm -f mr.log)
 
 rm -f mr-*
 
@@ -176,6 +179,7 @@ wait
 
 #########################################################
 echo '***' Starting reduce parallelism test.
+(cd ../../log-storage && rm -f mr.log)
 
 rm -f mr-*
 
@@ -199,6 +203,7 @@ wait
 
 #########################################################
 echo '***' Starting job count test.
+(cd ../../log-storage && rm -f mr.log)
 
 rm -f mr-*
 
@@ -228,6 +233,7 @@ wait
 rm -f mr-*
 
 echo '***' Starting early exit test.
+(cd ../../log-storage && rm -f mr.log)
 
 DF=anydone$$
 rm -f $DF
@@ -256,7 +262,11 @@ then
 else
   # the -n causes wait to wait for just one child process,
   # rather than waiting for all to finish.
-  wait -n
+  # wait -n
+  while [ ! -e $DF ]
+  do
+    sleep 0.2
+  done
 fi
 
 rm -f $DF
@@ -282,6 +292,7 @@ rm -f mr-*
 
 #########################################################
 echo '***' Starting crash test.
+(cd ../../log-storage && rm -f mr.log)
 
 # generate the correct output
 ../mrsequential ../../mrapps/nocrash.so ../pg*txt || exit 1
