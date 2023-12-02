@@ -16,6 +16,8 @@ const (
 	TaskTypeNone   TType = 0
 	TaskTypeMap    TType = 1
 	TaskTypeReduce TType = 2
+	TaskTypeWaiting TType = 3 // 等待任务完成
+	TaskTypeFinished TType = 4 // 全部任务完成
 )
 
 type ApplyTaskArgs struct {
@@ -24,6 +26,7 @@ type ApplyTaskArgs struct {
 type ApplyTaskReply struct {
 	TaskType TType
 	TaskId   int
+	TaskTerm int
 	Filename string
 	MapTaskCnt int
 	ReduceTaskCnt int
@@ -32,6 +35,7 @@ type ApplyTaskReply struct {
 type FinishTaskArgs struct {
 	TaskType TType
 	TaskId   int
+	TaskTerm int
 }
 
 type FinishTaskReply struct {

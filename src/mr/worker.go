@@ -8,6 +8,9 @@ import (
 	"net/rpc"
 	"os"
 	"sort"
+	"time"
+
+	"6.5840/mylog"
 )
 
 // Map functions return a slice of KeyValue.
@@ -45,11 +48,18 @@ func Worker(mapf func(string, string) []KeyValue,
 		// ask for task
 		applyTaskArgs := &ApplyTaskArgs{}
 		applyTaskReply := &ApplyTaskReply{}
-		call("Coordinator.ApplyTask", &applyTaskArgs, &applyTaskReply)
 
-		if applyTaskReply.TaskType == TaskTypeMap {
+		mylog.Infof("[worker %d]ApplyTask request", os.Getpid())
+		call("Coordinator.ApplyTask", &applyTaskArgs, &applyTaskReply)
+		mylog.Infof("[worker %d]ApplyTask result, taskId: %d, taskType: %d", os.Getpid(), applyTaskReply.TaskId, applyTaskReply.TaskType)
+
+		if applyTaskReply.TaskType == TaskTypeFinished {
+			// coornidator may died, which means job is finished
+			break
+		} else if applyTaskReply.TaskType == TaskTypeMap {
 			filename := applyTaskReply.Filename
 			taskId := applyTaskReply.TaskId
+			taskTerm := applyTaskReply.TaskTerm
 			reduceCnt := applyTaskReply.ReduceTaskCnt
 
 			// 读取file
@@ -62,43 +72,43 @@ func Worker(mapf func(string, string) []KeyValue,
 			// mapf解析
 			kvList := mapf(filename, string(fileContent))
 
-			// 创建临时文件
-			intermidateFile := make([]*os.File, reduceCnt)
-			for i := 0; i < reduceCnt; i++ {
-				ofilename := fmt.Sprintf("mr-%d-%d", taskId, i)
-				ofile, err := os.Create(ofilename)
-				if err != nil {
-					fmt.Println(err)
-					break
-				}
-				intermidateFile[i] = ofile
+			// 根据ihash(key)放入bucket
+			bucketList := make([][]KeyValue, reduceCnt)
+			for _, kv := range kvList {
+				i := ihash(kv.Key) % reduceCnt
+				bucketList[i] = append(bucketList[i], kv)
 			}
 
-			// 输出到reduceCnt个临时文件，每个key根据hash映射到文件
-			for _, kv := range kvList {
-				reduceId := ihash(kv.Key) % reduceCnt
-				ofile := intermidateFile[reduceId]
-				kvByte, err := json.Marshal(kv)
+			// 写入临时文件
+			for i := 0; i < len(bucketList); i++ {
+				ifilename := fmt.Sprintf("mr-%d-%d", taskId, i)
+				ifile, err := os.CreateTemp("", ifilename+"*")
 				if err != nil {
 					fmt.Println(err)
 					continue
 				}
-				kvByte = append(kvByte, '\n')
-				ofile.Write(kvByte)
-			}
-
-			// 关闭临时文件
-			for i := 0; i < reduceCnt; i++ {
-				intermidateFile[i].Close()
+				enc := json.NewEncoder(ifile)
+				for _, kv := range bucketList[i] {
+					err = enc.Encode(kv)
+					if err != nil {
+						fmt.Println(err)
+						continue
+					}
+				}
+				os.Rename(ifile.Name(), ifilename)
+				ifile.Close()
 			}
 
 			// 通知master任务完成
-			taskFinishArgs := &FinishTaskArgs{TaskType: TaskTypeMap, TaskId: taskId}
+			taskFinishArgs := &FinishTaskArgs{TaskType: TaskTypeMap, TaskId: taskId, TaskTerm: taskTerm}
 			taskFinishReply := &FinishTaskReply{}
+
+			mylog.Infof("[worker %d]FinishMapTask request, taskId: %d", os.Getpid(), taskFinishArgs.TaskId)
 			call("Coordinator.FinishTask", &taskFinishArgs, &taskFinishReply)
 
 		} else if applyTaskReply.TaskType == TaskTypeReduce {
 			taskId := applyTaskReply.TaskId
+			taskTerm := applyTaskReply.TaskTerm
 			mapCnt := applyTaskReply.MapTaskCnt
 
 			// 读取临时文件，组成kv-list
@@ -127,7 +137,7 @@ func Worker(mapf func(string, string) []KeyValue,
 
 			// 结果文件
 			ofilename := fmt.Sprintf("mr-out-%d", taskId)
-			ofile, err := os.Create(ofilename)
+			ofile, err := os.CreateTemp("", ofilename+"*")
 			if err != nil {
 				fmt.Println(err)
 				return
@@ -146,30 +156,28 @@ func Worker(mapf func(string, string) []KeyValue,
 				}
 				fmt.Fprintf(ofile, "%s %s\n", key, reducef(key, valList))
 			}
-
+			os.Rename(ofile.Name(), ofilename)
 			ofile.Close()
 
 			// 删除临时文件
-			for i := 0; i < mapCnt; i++ {
-				ifilename := fmt.Sprintf("mr-%d-%d", i, taskId)
-				err := os.Remove(ifilename)
-				if err != nil {
-					fmt.Println(err)
-					continue
-				}
-			}
+			// for i := 0; i < mapCnt; i++ {
+			// 	ifilename := fmt.Sprintf("mr-%d-%d", i, taskId)
+			// 	err := os.Remove(ifilename)
+			// 	if err != nil {
+			// 		fmt.Println(err)
+			// 		continue
+			// 	}
+			// }
 
 			// 通知master任务完成
-			taskFinishArgs := &FinishTaskArgs{TaskType: TaskTypeReduce, TaskId: taskId}
+			taskFinishArgs := &FinishTaskArgs{TaskType: TaskTypeReduce, TaskId: taskId, TaskTerm: taskTerm}
 			taskFinishReply := &FinishTaskReply{}
+			mylog.Infof("[worker %d]FinishReduceTask request, taskId: %d", os.Getpid(), taskFinishArgs.TaskId)
 			call("Coordinator.FinishTask", &taskFinishArgs, &taskFinishReply)
-
-		} else {
-			// fmt.Println("no task left!")
-			break
 		}
+		time.Sleep(time.Second)
 	}
-
+	mylog.Infof("[worker %d]Done", os.Getpid())
 }
 
 // send an RPC request to the coordinator, wait for the response.
